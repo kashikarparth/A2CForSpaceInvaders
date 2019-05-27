@@ -1,5 +1,6 @@
 import tensorflow as tf
 tf.reset_default_graph()
+
 import numpy as np
 import gym
 from skimage import transform
@@ -7,6 +8,7 @@ from skimage.color import rgb2gray
 from collections import deque
 from matplotlib import pyplot as plt
 import warnings
+
 warnings.filterwarnings('ignore')
 import time 
 
@@ -50,7 +52,6 @@ actions_taken = tf.placeholder(dtype = tf.int32, shape = [None,2])
 action_probabilities, state_values = a2cnet(stacked_batch)
 advantage_values = tf.subtract(reward_vals,state_values)
 value_loss = tf.reduce_mean(tf.square(advantage_values))
-
 
 log_action_probabilities = tf.log(tf.gather_nd(action_probabilities,actions_taken))
 policy_loss =tf.reduce_mean(-1 * tf.multiply(log_action_probabilities,advantage_values))
@@ -107,9 +108,7 @@ sess.run(init)
 def training_loop_per_episode(max_steps_per_episode, sess, env, gamma = 0.9):
     R = 0
     stacked_frames = deque([np.zeros((110,84),dtype=np.int) for i in range(stack_size)],maxlen = 4)
-    # Formal Replay
-    replay = []
-    
+
     #Placeholder_target_values
     actions = []
     r_i = []
@@ -118,12 +117,11 @@ def training_loop_per_episode(max_steps_per_episode, sess, env, gamma = 0.9):
     #Iniial_stack_tensor_ready
     observation = env.reset()
     observation_preprocessed = preprocess_frame(observation)
-    observation_stacked,_ = stack_frames(stacked_frames, observation_preprocessed, True)
+    observation_stacked,stacked_frames = stack_frames(stacked_frames, observation_preprocessed, True)
     observation_stacked_tensor = tf.convert_to_tensor(observation_stacked,dtype = tf.float32)
     observation_stacked_tensor = tf.reshape(observation_stacked_tensor,shape = [-1,110,84,4])
 
     for i_step in range(max_steps_per_episode):
-        env.render()
         var = np.random.uniform()
         if var>=0.4:
             action_taken,v_s = sess.run(a2cnet(observation_stacked_tensor,reuse = True))
@@ -143,23 +141,21 @@ def training_loop_per_episode(max_steps_per_episode, sess, env, gamma = 0.9):
         done = info['ale.lives']<3
         
         if not done:
-            replay.append((observation_preprocessed,action_taken,reward,observation_next_preprocessed))
+            R = v_s[0][0]
             observation = observation_next_preprocessed
             
-            observation_stacked,_ = stack_frames(stacked_frames, observation_preprocessed, False)
+            observation_stacked,stacked_frames = stack_frames(stacked_frames, observation_preprocessed, False)
             observation_stacked_tensor = tf.convert_to_tensor(observation_stacked,dtype = tf.float32)
             observation_stacked_tensor = tf.reshape(observation_stacked_tensor,shape = [-1,110,84,4])
         
         if done:
-            replay.append((observation_preprocessed,action_taken,reward, "END"))
-            R = v_s[0][0]
+            R = 0
             break
 
     for r_t in range(len(r_i)-1, -1, -1):
         R = r_i[r_t] + gamma*R
         r_i[r_t] = R
-    env.close()
-        
+
     return states_stack, actions, r_i
          
 
@@ -173,22 +169,8 @@ def training_loop(n_episodes, max_steps_per_episode, sess, env, gamma = 0.9):
         R_ = np.reshape(R_, newshape = [-1,1])
         _,totloss = sess.run([optimize, total_loss],{stacked_batch: states_stack_,actions_taken:actions_,reward_vals: R_})
         print("Total loss for episode " +str(episode+1)+ " is " + str(totloss) + " in " + str(time_taken) + " seconds.")
-        
-for i_epochs in range(10):
-    training_loop(1,1000,sess,env)
 
-
-
-
-
-
-
-
-
-
-
-
-
+training_loop(10000,30,sess,env)
 
 
 
