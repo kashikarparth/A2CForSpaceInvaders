@@ -48,8 +48,12 @@ def a2cnet(state, isTrain = True, reuse = False):
 stacked_batch = tf.placeholder(dtype = tf.float32, shape = [None, 110,84,4])
 reward_vals = tf.placeholder(dtype = tf.float32, shape = [None,1])
 actions_taken = tf.placeholder(dtype = tf.int32, shape = [None,2])
+observation_stack = tf.placeholder(dtype = tf.float32, shape = [None,110,84,4])
 
-action_probabilities, state_values = a2cnet(stacked_batch)
+
+inference = a2cnet(observation_stack)
+
+action_probabilities, state_values = a2cnet(stacked_batch, reuse = True)
 advantage_values = tf.subtract(reward_vals,state_values)
 value_loss = tf.reduce_mean(tf.square(advantage_values))
 
@@ -103,6 +107,8 @@ def stack_frames(stacked_frames, state, is_new_episode = False):
 sess = tf.Session()
 init = tf.global_variables_initializer()
 sess.run(init)
+saver = tf.train.Saver()
+
 
 
 def training_loop_per_episode(max_steps_per_episode, sess, env, gamma = 0.9):
@@ -118,35 +124,32 @@ def training_loop_per_episode(max_steps_per_episode, sess, env, gamma = 0.9):
     observation = env.reset()
     observation_preprocessed = preprocess_frame(observation)
     observation_stacked,stacked_frames = stack_frames(stacked_frames, observation_preprocessed, True)
-    observation_stacked_tensor = tf.convert_to_tensor(observation_stacked,dtype = tf.float32)
-    observation_stacked_tensor = tf.reshape(observation_stacked_tensor,shape = [-1,110,84,4])
+    observation_stacked_rs = np.reshape(observation_stacked, newshape = [-1,110,84,4])
 
     for i_step in range(max_steps_per_episode):
         var = np.random.uniform()
-        if var>=0.4:
-            action_taken,v_s = sess.run(a2cnet(observation_stacked_tensor,reuse = True))
+        
+        if var>=0.2:
+            action_taken,v_s = sess.run(inference,{observation_stack: observation_stacked_rs})
             action_taken = np.argmax(possible_actions[np.argmax(action_taken)])
             
         else:
-            _,v_s = sess.run(a2cnet(observation_stacked_tensor,reuse = True))
+            _,v_s = sess.run(inference,{observation_stack: observation_stacked_rs})
             action_taken = np.random.randint(low = 0, high = 6)
         
-        observation_next,reward,_,info = env.step(action_taken)
+        observation_next,reward,done,info = env.step(action_taken)
         observation_next_preprocessed = preprocess_frame(observation_next)
         
         states_stack.append(observation_stacked)
         actions.append((i_step,action_taken))
         r_i.append(reward)
-      
-        done = info['ale.lives']<3
         
         if not done:
             R = v_s[0][0]
             observation = observation_next_preprocessed
             
             observation_stacked,stacked_frames = stack_frames(stacked_frames, observation_preprocessed, False)
-            observation_stacked_tensor = tf.convert_to_tensor(observation_stacked,dtype = tf.float32)
-            observation_stacked_tensor = tf.reshape(observation_stacked_tensor,shape = [-1,110,84,4])
+            observation_stacked_rs = np.reshape(observation_stacked, newshape = [-1,110,84,4])
         
         if done:
             R = 0
@@ -160,8 +163,9 @@ def training_loop_per_episode(max_steps_per_episode, sess, env, gamma = 0.9):
          
 
 def training_loop(n_episodes, max_steps_per_episode, sess, env, gamma = 0.9):
-    print("#####################################################################################")
-    print("training_start")
+    lowest_loss = 100
+    loss_list = []
+    print("-----------------------Training started! ---------------------------------------")
     for episode in range(n_episodes):
         t = time.time()
         states_stack_, actions_, R_ = training_loop_per_episode(max_steps_per_episode, sess, env, gamma = 0.9)
@@ -169,11 +173,10 @@ def training_loop(n_episodes, max_steps_per_episode, sess, env, gamma = 0.9):
         R_ = np.reshape(R_, newshape = [-1,1])
         _,totloss = sess.run([optimize, total_loss],{stacked_batch: states_stack_,actions_taken:actions_,reward_vals: R_})
         print("Total loss for episode " +str(episode+1)+ " is " + str(totloss) + " in " + str(time_taken) + " seconds.")
+        loss_list.append(totloss)
+        if totloss<lowest_loss:
+            lowest_loss = totloss
+            saver.save(sess, "/home/kashikar/Drive/AI/Projects/4x4TicTacToe/Remake/model.ckpt")
+    plt.plot(range(n_episodes),loss_list)
 
-training_loop(10000,30,sess,env)
-
-
-
-
-
-
+training_loop(2000,1000,sess,env)
